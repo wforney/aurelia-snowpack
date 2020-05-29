@@ -14,11 +14,12 @@
   },
   "webDependencies": {},
   "devDependencies": {
+    "@aurelia/plugin-conventions": "dev",
     "aurelia": "dev",
     "parcel-bundler": "^1.12.4",
+    "rollup": "^2.11.2",
     "snowpack": "^2.0.0-0",
-    "typescript": "^3.8.3",
-    "@aurelia/plugin-conventions": "dev"
+    "typescript": "^3.9.3"
   },
   "gitHead": "YYY",
   "dependencies": {

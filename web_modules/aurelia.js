@@ -1858,6 +1858,8 @@ const InstrinsicTypeNames = new Set([
     'WeakMap',
     'WeakSet',
 ]);
+const factoryKey = 'di:factory';
+const factoryAnnotationKey = Protocol.annotation.keyFor(factoryKey);
 /** @internal */
 class Container {
     constructor(parent, config = DefaultContainerConfiguration) {
@@ -2046,13 +2048,16 @@ class Container {
         return PLATFORM.emptyArray;
     }
     getFactory(Type) {
-        const key = Protocol.annotation.keyFor('di:factory');
-        let factory = Metadata.getOwn(key, Type);
+        let factory = Metadata.getOwn(factoryAnnotationKey, Type);
         if (factory === void 0) {
-            Metadata.define(key, factory = createFactory(Type), Type);
-            Protocol.annotation.appendTo(Type, key);
+            Metadata.define(factoryAnnotationKey, factory = createFactory(Type), Type);
+            Protocol.annotation.appendTo(Type, factoryAnnotationKey);
         }
         return factory;
+    }
+    registerFactory(key, factory) {
+        Protocol.annotation.set(key, factoryKey, factory);
+        Protocol.annotation.appendTo(key, factoryAnnotationKey);
     }
     createChild(config) {
         return new Container(this, config !== null && config !== void 0 ? config : this.config);
@@ -2315,6 +2320,16 @@ const ISink = DI.createInterface('ISink').noDefault();
 const ILogEventFactory = DI.createInterface('ILogEventFactory').withDefault(x => x.singleton(DefaultLogEventFactory));
 const ILogger = DI.createInterface('ILogger').withDefault(x => x.singleton(DefaultLogger));
 const ILogScopes = DI.createInterface('ILogScope').noDefault();
+const LoggerSink = Object.freeze({
+    key: Protocol.annotation.keyFor('logger-sink-handles'),
+    define(target, definition) {
+        Metadata.define(this.key, definition.handles, target.prototype);
+        return target;
+    },
+    getHandles(target) {
+        return Metadata.get(this.key, target);
+    },
+});
 // http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
 const format = toLookup({
     red(str) {
@@ -2435,7 +2450,7 @@ DefaultLogEventFactory = __decorate([
 ], DefaultLogEventFactory);
 class ConsoleSink {
     constructor($console) {
-        this.emit = function emit(event) {
+        this.handleEvent = function emit(event) {
             const optionalParams = event.optionalParams;
             if (optionalParams === void 0 || optionalParams.length === 0) {
                 switch (event.severity) {
@@ -2470,56 +2485,93 @@ class ConsoleSink {
 }
 let DefaultLogger = class DefaultLogger {
     constructor(config, factory, sinks, scope = [], parent = null) {
+        var _a, _b, _c, _d, _e, _f;
         this.config = config;
         this.factory = factory;
-        this.sinks = sinks;
         this.scope = scope;
         this.scopedLoggers = Object.create(null);
+        let traceSinks;
+        let debugSinks;
+        let infoSinks;
+        let warnSinks;
+        let errorSinks;
+        let fatalSinks;
         if (parent === null) {
             this.root = this;
             this.parent = this;
+            traceSinks = this.traceSinks = [];
+            debugSinks = this.debugSinks = [];
+            infoSinks = this.infoSinks = [];
+            warnSinks = this.warnSinks = [];
+            errorSinks = this.errorSinks = [];
+            fatalSinks = this.fatalSinks = [];
+            for (const $sink of sinks) {
+                const handles = LoggerSink.getHandles($sink);
+                if ((_a = handles === null || handles === void 0 ? void 0 : handles.includes(0 /* trace */)) !== null && _a !== void 0 ? _a : true) {
+                    traceSinks.push($sink);
+                }
+                if ((_b = handles === null || handles === void 0 ? void 0 : handles.includes(1 /* debug */)) !== null && _b !== void 0 ? _b : true) {
+                    debugSinks.push($sink);
+                }
+                if ((_c = handles === null || handles === void 0 ? void 0 : handles.includes(2 /* info */)) !== null && _c !== void 0 ? _c : true) {
+                    infoSinks.push($sink);
+                }
+                if ((_d = handles === null || handles === void 0 ? void 0 : handles.includes(3 /* warn */)) !== null && _d !== void 0 ? _d : true) {
+                    warnSinks.push($sink);
+                }
+                if ((_e = handles === null || handles === void 0 ? void 0 : handles.includes(4 /* error */)) !== null && _e !== void 0 ? _e : true) {
+                    errorSinks.push($sink);
+                }
+                if ((_f = handles === null || handles === void 0 ? void 0 : handles.includes(5 /* fatal */)) !== null && _f !== void 0 ? _f : true) {
+                    fatalSinks.push($sink);
+                }
+            }
         }
         else {
             this.root = parent.root;
             this.parent = parent;
+            traceSinks = this.traceSinks = parent.traceSinks;
+            debugSinks = this.debugSinks = parent.debugSinks;
+            infoSinks = this.infoSinks = parent.infoSinks;
+            warnSinks = this.warnSinks = parent.warnSinks;
+            errorSinks = this.errorSinks = parent.errorSinks;
+            fatalSinks = this.fatalSinks = parent.fatalSinks;
         }
-        const sinksLen = sinks.length;
-        let i = 0;
-        const emit = (level, msgOrGetMsg, optionalParams) => {
+        const emit = ($sinks, level, msgOrGetMsg, optionalParams) => {
             const message = typeof msgOrGetMsg === 'function' ? msgOrGetMsg() : msgOrGetMsg;
             const event = factory.createLogEvent(this, level, message, optionalParams);
-            for (i = 0; i < sinksLen; ++i) {
-                sinks[i].emit(event);
+            for (let i = 0, ii = $sinks.length; i < ii; ++i) {
+                $sinks[i].handleEvent(event);
             }
         };
         this.trace = function trace(messageOrGetMessage, ...optionalParams) {
             if (config.level <= 0 /* trace */) {
-                emit(0 /* trace */, messageOrGetMessage, optionalParams);
+                emit(traceSinks, 0 /* trace */, messageOrGetMessage, optionalParams);
             }
         };
         this.debug = function debug(messageOrGetMessage, ...optionalParams) {
             if (config.level <= 1 /* debug */) {
-                emit(1 /* debug */, messageOrGetMessage, optionalParams);
+                emit(debugSinks, 1 /* debug */, messageOrGetMessage, optionalParams);
             }
         };
         this.info = function info(messageOrGetMessage, ...optionalParams) {
             if (config.level <= 2 /* info */) {
-                emit(2 /* info */, messageOrGetMessage, optionalParams);
+                emit(infoSinks, 2 /* info */, messageOrGetMessage, optionalParams);
             }
         };
         this.warn = function warn(messageOrGetMessage, ...optionalParams) {
             if (config.level <= 3 /* warn */) {
-                emit(3 /* warn */, messageOrGetMessage, optionalParams);
+                emit(warnSinks, 3 /* warn */, messageOrGetMessage, optionalParams);
             }
         };
         this.error = function error(messageOrGetMessage, ...optionalParams) {
             if (config.level <= 4 /* error */) {
-                emit(4 /* error */, messageOrGetMessage, optionalParams);
+                emit(errorSinks, 4 /* error */, messageOrGetMessage, optionalParams);
             }
         };
         this.fatal = function fatal(messageOrGetMessage, ...optionalParams) {
             if (config.level <= 5 /* fatal */) {
-                emit(5 /* fatal */, messageOrGetMessage, optionalParams);
+                emit(fatalSinks, 5 /* fatal */, messageOrGetMessage, optionalParams);
             }
         };
     }
@@ -2527,7 +2579,7 @@ let DefaultLogger = class DefaultLogger {
         const scopedLoggers = this.scopedLoggers;
         let scopedLogger = scopedLoggers[name];
         if (scopedLogger === void 0) {
-            scopedLogger = scopedLoggers[name] = new DefaultLogger(this.config, this.factory, this.sinks, this.scope.concat(name), this);
+            scopedLogger = scopedLoggers[name] = new DefaultLogger(this.config, this.factory, (void 0), this.scope.concat(name), this);
         }
         return scopedLogger;
     }
@@ -2545,23 +2597,26 @@ DefaultLogger = __decorate([
  *
  * NOTE: You *must* register the return value of `.create` with the container / au instance, not this `LoggerConfiguration` object itself.
  *
+ * @example
  * ```ts
- * // GOOD
- * container.register(LoggerConfiguration.create(console))
- * // GOOD
- * container.register(LoggerConfiguration.create(console, LogLevel.debug))
- * // GOOD
- * container.register(LoggerConfiguration.create({
- *   debug: PLATFORM.noop,
- *   info: PLATFORM.noop,
- *   warn: PLATFORM.noop,
- *   error: msg => {
- *     throw new Error(msg);
- *   }
- * }, LogLevel.debug))
+ * container.register(LoggerConfiguration.create());
  *
- * // BAD
- * container.register(LoggerConfiguration)
+ * container.register(LoggerConfiguration.create({$console: console}))
+ *
+ * container.register(LoggerConfiguration.create({$console: console, level: LogLevel.debug}))
+ *
+ * container.register(LoggerConfiguration.create({
+ *  $console: {
+ *     debug: PLATFORM.noop,
+ *     info: PLATFORM.noop,
+ *     warn: PLATFORM.noop,
+ *     error: msg => {
+ *       throw new Error(msg);
+ *     }
+ *  },
+ *  level: LogLevel.debug
+ * }))
+ *
  * ```
  */
 const LoggerConfiguration = toLookup({
@@ -2570,10 +2625,17 @@ const LoggerConfiguration = toLookup({
      * @param level - The global `LogLevel` to configure. Defaults to `warn` or higher.
      * @param colorOptions - Whether to use colors or not. Defaults to `noColors`. Colors are especially nice in nodejs environments but don't necessarily work (well) in all environments, such as browsers.
      */
-    create($console, level = 3 /* warn */, colorOptions = 0 /* noColors */) {
+    create({ $console, level = 3 /* warn */, colorOptions = 0 /* noColors */, sinks = [], } = {}) {
         return toLookup({
             register(container) {
-                return container.register(Registration.instance(ILogConfig, new LogConfig(colorOptions, level)), Registration.instance(ISink, new ConsoleSink($console)));
+                container.register(Registration.instance(ILogConfig, new LogConfig(colorOptions, level)));
+                if ($console !== void 0 && $console !== null) {
+                    container.register(Registration.instance(ISink, new ConsoleSink($console)));
+                }
+                for (const $sink of sinks) {
+                    container.register(Registration.singleton(ISink, $sink));
+                }
+                return container;
             },
         });
     },
@@ -11310,6 +11372,9 @@ class RenderContext {
     }
     getFactory(key) {
         return this.container.getFactory(key);
+    }
+    registerFactory(key, factory) {
+        this.container.registerFactory(key, factory);
     }
     createChild() {
         return this.container.createChild();
@@ -22610,6 +22675,8 @@ var __metadata$P = (undefined && undefined.__metadata) || function (k, v) {
  * Enqueued items can be awaited. Enqueued items can specify an (arbitrary)
  * execution cost and the queue can be set up (activated) to only process
  * a specific amount of execution cost per RAF/tick.
+ *
+ * @internal - Shouldn't be used directly.
  */
 class Queue {
     constructor(callback) {
@@ -22713,6 +22780,9 @@ var __metadata$Q = (undefined && undefined.__metadata) || function (k, v) {
 var __param$s = (undefined && undefined.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+/**
+ * @internal - Will be removed
+ */
 let BrowserNavigator = class BrowserNavigator {
     constructor(scheduler, dom) {
         this.scheduler = scheduler;
@@ -22873,6 +22943,8 @@ BrowserNavigator = __decorate$V([
 
 /**
  * Class responsible for handling interactions that should trigger navigation.
+ *
+ * @internal - Shouldn't be used directly.
  */
 class LinkHandler {
     constructor(dom) {
@@ -22976,6 +23048,9 @@ class LinkHandler {
 }
 LinkHandler.inject = [IDOM];
 
+/**
+ * @internal - Shouldn't be used directly
+ */
 function arrayRemove(arr, func) {
     const removed = [];
     let arrIndex = arr.findIndex(func);
@@ -22986,6 +23061,9 @@ function arrayRemove(arr, func) {
     return removed;
 }
 
+/**
+ * @internal - Shouldn't be used directly
+ */
 function parseQuery(query) {
     if (!query || !query.length) {
         return {};
@@ -23000,6 +23078,9 @@ function parseQuery(query) {
     return parameters;
 }
 
+/**
+ * @internal - Shouldn't be used directly
+ */
 var ContentStatus;
 (function (ContentStatus) {
     ContentStatus[ContentStatus["none"] = 0] = "none";
@@ -23008,6 +23089,9 @@ var ContentStatus;
     ContentStatus[ContentStatus["initialized"] = 3] = "initialized";
     ContentStatus[ContentStatus["added"] = 4] = "added";
 })(ContentStatus || (ContentStatus = {}));
+/**
+ * @internal - Shouldn't be used directly
+ */
 class ViewportContent {
     constructor(
     // Can (and wants) be a (resolved) type or a string (to be resolved later)
@@ -23442,6 +23526,9 @@ class ViewportScope {
     }
 }
 
+/**
+ * @internal - Used when founding route/instructions
+ */
 class FoundRoute {
     constructor(match = null, matching = '', instructions = [], remaining = '') {
         this.match = match;
@@ -23460,6 +23547,9 @@ class FoundRoute {
     }
 }
 
+/**
+ * @internal - Helper class
+ */
 class Collection extends Array {
     constructor() {
         super(...arguments);
@@ -23975,6 +24065,9 @@ class StarSegment {
 
 const RouteRecognizer$1 = RouteRecognizer;
 
+/**
+ * @internal - Shouldn't be used directly
+ */
 class Scope$1 {
     constructor(router, hasScope, owningScope, viewport = null, viewportScope = null, rootComponentType = null) {
         this.router = router;
@@ -24895,6 +24988,9 @@ const NavigationInstructionResolver = {
     },
 };
 
+/**
+ * @internal - Shouldn't be used directly
+ */
 var ParametersType;
 (function (ParametersType) {
     ParametersType["none"] = "none";
@@ -24902,6 +24998,9 @@ var ParametersType;
     ParametersType["array"] = "array";
     ParametersType["object"] = "object";
 })(ParametersType || (ParametersType = {}));
+/**
+ * Public API - The viewport instructions are the core of the router's navigations
+ */
 class ViewportInstruction {
     constructor(component, viewport, parameters, ownsScope = true, nextScopeInstructions = null) {
         this.ownsScope = ownsScope;
@@ -25584,6 +25683,9 @@ var ReentryBehavior;
     ReentryBehavior["refresh"] = "refresh";
 })(ReentryBehavior || (ReentryBehavior = {}));
 
+/**
+ * @internal - Shouldn't be used directly
+ */
 class Hook {
     constructor(hook, options, id) {
         this.hook = hook;
@@ -25662,12 +25764,18 @@ class Target {
     }
 }
 
+/**
+ * Public API
+ */
 var HookTypes;
 (function (HookTypes) {
     HookTypes["BeforeNavigation"] = "beforeNavigation";
     HookTypes["TransformFromUrl"] = "transformFromUrl";
     HookTypes["TransformToUrl"] = "transformToUrl";
 })(HookTypes || (HookTypes = {}));
+/**
+ * @internal - Shouldn't be used directly
+ */
 class HookManager {
     constructor() {
         this.hooks = {
@@ -25719,6 +25827,9 @@ class HookManager {
     }
 }
 
+/**
+ * @internal - Used by au-nav
+ */
 class NavRoute {
     constructor(nav, route) {
         this.nav = nav;
@@ -25803,6 +25914,9 @@ class NavRoute {
     }
 }
 
+/**
+ * Public API - Used by au-nav and Router add/setNav
+ */
 class Nav {
     constructor(router, name, routes = [], classes = {}) {
         this.router = router;
@@ -25841,6 +25955,9 @@ class Nav {
     }
 }
 
+/**
+ * @internal - Shouldn't be used directly
+ */
 class Navigator {
     constructor() {
         this.entries = [];
@@ -26073,6 +26190,9 @@ var __decorate$W = (undefined && undefined.__decorate) || function (decorators, 
 var __metadata$R = (undefined && undefined.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+/**
+ * @internal - Shouldn't be used directly
+ */
 class QueueTask {
     constructor(taskQueue, item, cost = 0) {
         this.taskQueue = taskQueue;
@@ -26114,6 +26234,8 @@ class QueueTask {
  * Enqueued items' tasks can be awaited. Enqueued items can specify an
  * (arbitrary) execution cost and the queue can be set up (activated) to
  * only process a specific amount of execution cost per RAF/tick.
+ *
+ * @internal - Shouldn't be used directly.
  */
 class TaskQueue$1 {
     constructor(callback) {
@@ -26226,6 +26348,9 @@ var __metadata$S = (undefined && undefined.__metadata) || function (k, v) {
 var __param$t = (undefined && undefined.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+/**
+ * @internal - Shouldn't be used directly
+ */
 let BrowserViewerStore = class BrowserViewerStore {
     constructor(scheduler, dom) {
         this.scheduler = scheduler;
@@ -26377,20 +26502,55 @@ BrowserViewerStore = __decorate$X([
 ], BrowserViewerStore);
 
 /* eslint-disable max-lines-per-function */
+/**
+ * @internal
+ */
 class ClosestScope {
 }
 const IRouter = DI.createInterface('IRouter').withDefault(x => x.singleton(Router));
 class Router {
-    constructor(container, navigator, navigation, linkHandler, instructionResolver) {
+    constructor(
+    /**
+     * @internal - Shouldn't be used directly.
+     */
+    container, 
+    /**
+     * @internal - Shouldn't be used directly.
+     */
+    navigator, 
+    /**
+     * @internal - Shouldn't be used directly.
+     */
+    navigation, 
+    /**
+     * @internal - Shouldn't be used directly.
+     */
+    linkHandler, 
+    /**
+     * @internal - Shouldn't be used directly. Probably.
+     */
+    instructionResolver) {
         this.container = container;
         this.navigator = navigator;
         this.navigation = navigation;
         this.linkHandler = linkHandler;
         this.instructionResolver = instructionResolver;
         this.rootScope = null;
+        /**
+         * @internal
+         */
         this.navs = {};
+        /**
+         * Public API
+         */
         this.activeComponents = [];
+        /**
+         * @internal
+         */
         this.appendedInstructions = [];
+        /**
+         * @internal
+         */
         this.options = {
             useHref: true,
             statefulHistoryLength: 0,
@@ -26402,6 +26562,9 @@ class Router {
         this.processingNavigation = null;
         this.lastNavigation = null;
         this.staleChecks = {};
+        /**
+         * @internal
+         */
         // TODO: use @bound and improve name (eslint-disable is temp)
         // eslint-disable-next-line @typescript-eslint/typedef
         this.linkCallback = (info) => {
@@ -26416,12 +26579,18 @@ class Router {
             // Adds to Navigator's Queue, which makes sure it's serial
             this.goto(instruction, { origin: info.anchor }).catch(error => { throw error; });
         };
+        /**
+         * @internal
+         */
         // TODO: use @bound and improve name (eslint-disable is temp)
         // eslint-disable-next-line @typescript-eslint/typedef
         this.navigatorCallback = (instruction) => {
             // Instructions extracted from queue, one at a time
             this.processNavigations(instruction).catch(error => { throw error; });
         };
+        /**
+         * @internal
+         */
         // TODO: use @bound and improve name (eslint-disable is temp)
         // eslint-disable-next-line @typescript-eslint/typedef
         this.navigatorSerializeCallback = async (entry, preservedEntries) => {
@@ -26458,6 +26627,9 @@ class Router {
             }
             return serialized;
         };
+        /**
+         * @internal
+         */
         // TODO: use @bound and improve name (eslint-disable is temp)
         // eslint-disable-next-line @typescript-eslint/typedef
         this.browserNavigatorCallback = (browserNavigationEvent) => {
@@ -26468,6 +26640,9 @@ class Router {
             entry.fromBrowser = true;
             this.navigator.navigate(entry).catch(error => { throw error; });
         };
+        /**
+         * @internal
+         */
         // TODO: use @bound and improve name (eslint-disable is temp)
         // eslint-disable-next-line @typescript-eslint/typedef
         this.processNavigations = async (qInstruction) => {
@@ -26670,12 +26845,21 @@ class Router {
         };
         this.hookManager = new HookManager();
     }
+    /**
+     * Public API
+     */
     get isNavigating() {
         return this.processingNavigation !== null;
     }
+    /**
+     * @internal
+     */
     get statefulHistory() {
         return this.options.statefulHistoryLength !== void 0 && this.options.statefulHistoryLength > 0;
     }
+    /**
+     * Public API
+     */
     activate(options) {
         if (this.isActive) {
             throw new Error('Router has already been activated');
@@ -26702,6 +26886,9 @@ class Router {
         });
         this.ensureRootScope();
     }
+    /**
+     * Public API
+     */
     async loadUrl() {
         const entry = {
             ...this.navigation.viewerState,
@@ -26715,6 +26902,9 @@ class Router {
         this.loadedFirst = true;
         return result;
     }
+    /**
+     * Public API
+     */
     deactivate() {
         if (!this.isActive) {
             throw new Error('Router has not been activated');
@@ -26723,6 +26913,9 @@ class Router {
         this.navigator.deactivate();
         this.navigation.deactivate();
     }
+    /**
+     * @internal
+     */
     findScope(origin) {
         // this.ensureRootScope();
         if (origin === void 0 || origin === null) {
@@ -26733,6 +26926,9 @@ class Router {
         }
         return this.getClosestScope(origin) || this.rootScope.scope;
     }
+    /**
+     * @internal
+     */
     findParentScope(container) {
         if (container === null) {
             return this.rootScope.scope;
@@ -26749,15 +26945,40 @@ class Router {
         }
         return this.rootScope.scope;
     }
-    // External API to get viewport by name
+    /**
+     * Public API - Get viewport by name
+     */
     getViewport(name) {
         return this.allViewports().find(viewport => viewport.name === name) || null;
     }
-    // Called from the viewport scope custom element in created()
+    /**
+     * Public API (not yet implemented)
+     */
+    addViewport(...args) {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Public API (not yet implemented)
+     */
+    findViewportScope(...args) {
+        throw new Error('Not implemented');
+    }
+    /**
+     * Public API (not yet implemented)
+     */
+    addViewportScope(...args) {
+        throw new Error('Not implemented');
+    }
+    /**
+     * @internal - Called from the viewport scope custom element in created()
+     */
     setClosestScope(viewModelOrContainer, scope) {
         const container = this.getContainer(viewModelOrContainer);
         Registration.instance(ClosestScope, scope).register(container);
     }
+    /**
+     * @internal
+     */
     getClosestScope(viewModelOrElement) {
         const container = 'resourceResolvers' in viewModelOrElement
             ? viewModelOrElement
@@ -26770,12 +26991,17 @@ class Router {
         }
         return container.get(ClosestScope) || null;
     }
+    /**
+     * @internal
+     */
     unsetClosestScope(viewModelOrContainer) {
         const container = this.getContainer(viewModelOrContainer);
         // TODO: Get an 'unregister' on container
         container.resolvers.delete(ClosestScope);
     }
-    // Called from the viewport custom element in attached()
+    /**
+     * @internal - Called from the viewport custom element
+     */
     connectViewport(viewport, container, name, element, options) {
         const parentScope = this.findParentScope(container);
         if (viewport === null) {
@@ -26784,14 +27010,18 @@ class Router {
         }
         return viewport;
     }
-    // Called from the viewport custom element
+    /**
+     * @internal - Called from the viewport custom element
+     */
     disconnectViewport(viewport, container, element) {
         if (!viewport.connectedScope.parent.removeViewport(viewport, element, container)) {
             throw new Error(`Failed to remove viewport: ${viewport.name}`);
         }
         this.unsetClosestScope(container);
     }
-    // Called from the viewport scope custom element in attached()
+    /**
+     * @internal - Called from the viewport scope custom element
+     */
     connectViewportScope(viewportScope, name, container, element, options) {
         const parentScope = this.findParentScope(container);
         if (viewportScope === null) {
@@ -26800,17 +27030,25 @@ class Router {
         }
         return viewportScope;
     }
-    // Called from the viewport scope custom element
+    /**
+     * @internal - Called from the viewport scope custom element
+     */
     disconnectViewportScope(viewportScope, container) {
         if (!viewportScope.connectedScope.parent.removeViewportScope(viewportScope)) {
             throw new Error(`Failed to remove viewport scope: ${viewportScope.path}`);
         }
         this.unsetClosestScope(container);
     }
+    /**
+     * @internal
+     */
     allViewports(includeDisabled = false, includeReplaced = false) {
         // this.ensureRootScope();
         return this.rootScope.scope.allViewports(includeDisabled, includeReplaced);
     }
+    /**
+     * Public API - THE navigation API
+     */
     goto(instructions, options) {
         options = options || {};
         // TODO: Review query extraction; different pos for path and fragment!
@@ -26844,15 +27082,27 @@ class Router {
         };
         return this.navigator.navigate(entry);
     }
+    /**
+     * Public API
+     */
     refresh() {
         return this.navigator.refresh();
     }
+    /**
+     * Public API
+     */
     back() {
         return this.navigator.go(-1);
     }
+    /**
+     * Public API
+     */
     forward() {
         return this.navigator.go(1);
     }
+    /**
+     * Public API
+     */
     checkActive(instructions) {
         for (const instruction of instructions) {
             const scopeInstructions = this.instructionResolver.matchScope(this.activeComponents, instruction.scope);
@@ -26868,6 +27118,9 @@ class Router {
         }
         return true;
     }
+    /**
+     * Public API
+     */
     setNav(name, routes, classes) {
         const nav = this.findNav(name);
         if (nav !== void 0 && nav !== null) {
@@ -26875,6 +27128,9 @@ class Router {
         }
         this.addNav(name, routes, classes);
     }
+    /**
+     * Public API
+     */
     addNav(name, routes, classes) {
         let nav = this.navs[name];
         if (nav === void 0 || nav === null) {
@@ -26883,6 +27139,9 @@ class Router {
         nav.addRoutes(routes);
         nav.update();
     }
+    /**
+     * Public API
+     */
     updateNav(name) {
         const navs = name
             ? [name]
@@ -26893,9 +27152,15 @@ class Router {
             }
         }
     }
+    /**
+     * Public API
+     */
     findNav(name) {
         return this.navs[name];
     }
+    /**
+     * Public API
+     */
     addRoutes(routes, context) {
         // TODO: This should add to the context instead
         // TODO: Add routes without context to rootScope content (which needs to be created)?
@@ -26903,20 +27168,32 @@ class Router {
         // const viewport = (context !== void 0 ? this.closestViewport(context) : this.rootScope) || this.rootScope as Viewport;
         // return viewport.addRoutes(routes);
     }
+    /**
+     * Public API
+     */
     removeRoutes(routes, context) {
         // TODO: This should remove from the context instead
         // const viewport = (context !== void 0 ? this.closestViewport(context) : this.rootScope) || this.rootScope as Viewport;
         // return viewport.removeRoutes(routes);
     }
+    /**
+     * Public API
+     */
     addHooks(hooks) {
         return hooks.map(hook => this.addHook(hook.hook, hook.options));
     }
     addHook(hook, options) {
         return this.hookManager.addHook(hook, options);
     }
+    /**
+     * Public API
+     */
     removeHooks(hooks) {
         return;
     }
+    /**
+     * Public API - The right way to create ViewportInstructions
+     */
     createViewportInstruction(component, viewport, parameters, ownsScope = true, nextScopeInstructions = null) {
         return this.instructionResolver.createViewportInstruction(component, viewport, parameters, ownsScope, nextScopeInstructions);
     }
